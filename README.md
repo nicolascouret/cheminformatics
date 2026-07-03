@@ -30,6 +30,8 @@ calculés avec RDKit. Comparaison d'une régression linéaire et d'un Random For
 - **pandas / numpy** — manipulation de données
 - **matplotlib / seaborn** — visualisation
 
+[📓 Voir le notebook](https://tub-aspique.github.io/cheminformatics/notebooks/01_esol_solubility.html)
+
 ## Reproduire l'environnement
 
 ```bash
