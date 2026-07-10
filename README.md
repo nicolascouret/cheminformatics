@@ -58,7 +58,7 @@ python -m streamlit run app.py
 
 ## References
 
-Boobier et al. (2020). *Machine learning with physicochemical relationships: solubility prediction in organic solvents and water.* Nature Communications, 11, 5753.
+Boobier et al. (2020). *Machine learning with physicochemical relationships: solubility prediction in organic solvents and water.* Nature Communications, 11, 5753.\\
 Sorkun, M.C., Khetan, A. & Er, S. AqSolDB, a curated reference set of aqueous solubility and 2D descriptors for a diverse set of compounds. Sci Data 6, 143 (2019). https://doi.org/10.1038/s41597-019-0151-1
 
 ## Reproduce the environment
