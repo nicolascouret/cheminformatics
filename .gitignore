@@ -2,3 +2,8 @@ __pycache__/
 *.pyc
 .ipynb_chekpoints/
 .env
+xtb_results/
+xtb_chunks/
+rl_runs/
+*.chkpt
+__pycache__/
