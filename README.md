@@ -1,17 +1,13 @@
 # Cheminformatics & ML
 
 Personal self-taught project exploring Machine Learning applied to chemistry,
-built alongside my Master's degree in Chemistry (ENS Paris-Saclay).
+built alongside my Master's degree in Chemistry (ENS Paris-Saclay | Sorbonne Université).
 
 ## Objective
 
 Explore how ML can be combined with chemical data and molecular descriptors
-to predict physicochemical properties and biological activity of molecules from
-their structure. The project moves progressively from physicochemical endpoints
-to structure-activity relationships and a deployed prediction app. All models are
-trained on publicly available datasets and evaluated with rigorous protocols
-(cross-dataset validation, scaffold splits, ablation studies, applicability-domain
-checks), with explicit reporting of the ceilings imposed by the data.
+to predict physicochemical properties, biological activity of molecules from
+their structure, and then to design molecules *de novo*. On one hand, the project moves progressively from physicochemical endpoints to structure-activity relationships and a deployed prediction app. On the other hand, it goes from property prediction to de novo molecular generation, where the same predictive models become the reward that guides reinforcement-learning (RL) and evolutionnary generators toward novel, druf-like, EGFR-active candidates. All models are trained on publicly available datasets and evaluated with rigorous protocols (cross-dataset validation, scaffold splits, ablation studies, multi-seed replication,  applicability-domain checks), with explicit reporting of the ceilings imposed by the data.
 
 ## Projects
 
@@ -24,7 +20,7 @@ RDKit descriptors and Morgan fingerprints on the ESOL benchmark dataset [1].
 **Training protocol:**
 All models were trained using an 80/20 random train/test split (random_state=42
 for reproducibility). No validation set was used for hyperparameter tuning in
-this initial benchmark — default hyperparameters were applied throughout.
+this initial benchmark.
 The 6 molecular features used are: LogP, molecular weight, number of H-bond
 donors and acceptors, topological polar surface area (TPSA), and number of
 aromatic rings. Morgan fingerprints (radius=2, 2048 bits) were added in a
@@ -260,14 +256,7 @@ units, median deduplication per molecule).
 **hERG classification:** ROC-AUC = 0.70 (threshold pIC50 > 5).
 
 **Discussion:**
-On the matched (scaffold) protocol, XGBoost on BACE1 (RMSE 0.847) beats the
-published random-forest benchmark (1.07) and approaches the D-MPNN graph network
-(0.791) — a strong result for a non-optimized classical pipeline. Linear regression
-collapses on BACE1 (pocket-specific, non-linear SAR) but not on hERG, whose blockade
-has a partly linear dependence on lipophilicity. hERG regression sits close to the
-~0.5 log inter-laboratory noise floor, so its modest R² reflects data quality rather
-than model inadequacy, and reframing it as classification does not create signal that
-is not there.
+On the matched (scaffold) protocol, XGBoost on BACE1 (RMSE 0.847) beats the published random-forest benchmark (1.07) and approaches the D-MPNN graph network (0.791). Linear regression collapses on BACE1 (pocket-specific, non-linear SAR) but not on hERG, whose blockade has a partly linear dependence on lipophilicity. hERG regression sits close to the ~0.5 log inter-laboratory noise floor, so its modest R² reflects data quality rather than model inadequacy, and reframing it as classification does not create signal that is not there.
 
 An activity-cliff analysis found that 4.2% of structurally similar BACE1 pairs
 (Tanimoto > 0.8) differ by more than 2 pIC50 units. Each such cliff is an error no
@@ -288,12 +277,7 @@ ChEMBL [12] (~58,000 molecule-target records).
 
 **Training protocol:**
 Each target's IC50 data were curated and converted to pIC50 as in notebook 05.
-A key data-integrity step: every target ChEMBL identifier was verified against its
-preferred name before modelling — several identifiers initially used resolved to the
-wrong protein and were corrected. Two strategies were compared: Approach A trains one
-XGBoost per target; Approach B trains a single XGBoost on all molecule-target pairs
-with a one-hot target encoding. Both are evaluated on held-out data (stratified by
-target for B).
+Two strategies were compared: Approach A trains one XGBoost per target; Approach B trains a single XGBoost on all molecule-target pairs with a one-hot target encoding. Both are evaluated on held-out data (stratified by target for B).
 
 **Approach A (per-target) vs Approach B (unified), held-out R²:**
 | Target | A (per-target) | B (unified one-hot) |
@@ -312,19 +296,152 @@ target for B).
 The per-target ensemble outperforms the unified one-hot model on all nine targets.
 A one-hot flag is too weak a mechanism to let a single tree model serve proteins with
 genuinely different structure-activity relationships: it settles on a compromise that
-fits no target as well as its dedicated model. Multi-target learning is not free — it
-requires related targets or a mechanism that learns a shared representation with
-target-specific outputs (a multi-task graph neural network), identified here as the
-principled next step and left as future work.
+fits no target as well as its dedicated model. Multi-target learning requires related targets or a mechanism that learns a shared representation with target-specific outputs (a multi-task graph neural network), identified here as the principled next step and left as future work.
 
-A qualitative validation on known drugs behaved sensibly: gefitinib (an EGFR
-inhibitor) ranked EGFR as its top predicted target, and aspirin scored low
-throughout (a negative control). It also exposed a calibration bias — the Aurora A
-model predicts high activity for almost any molecule — showing that cross-target
-ranking is only meaningful when per-target models are comparably calibrated, a
-further argument for a jointly trained model.
+A check on known drugs behaved as expected. Gefitinib, an EGFR inhibitor, ranked EGFR as its top predicted target, and aspirin scored low across all nine targets as a negative control. The same check exposed a calibration bias: the Aurora A model predicts high activity for almost any molecule. Cross-target ranking is therefore reliable only when the per-target models are comparably calibrated, which is a further argument for training them jointly.
 
-The per-target ensemble was deployed in the interactive app (see below).
+The per-target ensemble was deployed in the interactive app (see below) and reused as the activity term of the generation reward.
+
+---
+
+## From Prediction to Molecular Design
+
+Having built predictive models, the second half of the project turns them into the
+*reward* that steers molecular generators toward novel EGFR-active, drug-like,
+synthesizable and physically viable candidates. The same objective is optimized by
+several gradient-free paradigms (genetic algorithm, reinforcement learning) and
+studied with the same rigor (multi-seed replication, ablations, honest ceilings).
+
+### 07 — Multi-Objective Generation with a Genetic Algorithm
+`notebooks/07_generation_genetic_algorithm.ipynb`
+
+A shift from *predicting* properties to *designing* molecules. A genetic algorithm operating on SELFIES [13] strings  optimizes a composite fitness toward EGFR activity.
+
+**Fitness function (`multi_fitness`):** a product of four desirabilities in [0,1] —
+predicted EGFR activity (pIC50, XGBoost + ECFP from the notebook 05–06 pipeline),
+drug-likeness (QED), synthetic accessibility ((10−SA)/9), and an applicability-domain
+term (a Tanimoto window to the training set penalizing both out-of-domain and
+trivial-copy molecules). The reward is also gated by hard structural guards (allowed elements
+C/N/O/F/S/Cl/Br, MW 150–600, |formal charge| ≤ 1, PAINS/Brenk alerts) that zero any
+invalid candidate.
+
+**Discussion:** this notebook defines the reward reused by every downstream generator,
+and provides a strong gradient-free baseline against which reinforcement learning is
+later compared at equal oracle budget.
+
+![GA fitness evolution](figures/nb07_ga_fitness.png)
+
+**Genetic-algorithm optimization of the composite EGFR objective**. *Left*: the best composite score rises from 0.42 to 0.49 over 20 generations, then plateaus. The score is a product of four bounded desirabilities, so absolute values stay well below 1. *Right*: the per-term desirability breakdown of the top-scoring molecule. Activity is the lowest term, consistent with the ablation result that activity is the binding constraint while the drug-likeness guardrails are easily satisfied.
+
+---
+
+### 08 — De Novo Generation with Reinforcement Learning (REINVENT)
+`notebooks/08_generation_reinforcement_learning.ipynb`
+
+The same objective, optimized by a different paradigm. An autoregressive RNN policy (REINVENT 4 [14]), pretrained on PubChem as a prior, is fine-tuned by policy gradient against the notebook-07 reward (DAP loss, σ=128, KL-to-prior regularization).
+
+**Protocol**: Runs use 190 steps and a batch size of 64. The prior emits only valid SMILES, so validity is 100% by construction. The genetic algorithm and reinforcement learning are compared at equal oracle budget over several independent replicates, on reward-independent metrics: predicted activity, QED, synthetic accessibility, and scaffold diversity.
+
+**Discussion**: The pretrained prior already knows how to write valid, drug-like molecules. Reinforcement learning therefore spends its oracle budget on the objective rather than on SMILES grammar. This is the RLHF paradigm applied to molecules: pretrain a generic generator, then steer it with a reward. The prior on its own never favors EGFR actives. The predicted-activity trajectory rises across training steps, which is the reward at work, and it separates what the prior contributes from what the reward adds. A prior-only baseline quantifies that split (see the ablation below).
+
+![RL vs GA comparison](figures/nb08_RLvsGA.png)
+
+**RL vs GA comparison** Best composite score against the number of reward evaluations, for the genetic algorithm and reinforcement learning at equal oracle budget. Mean ± 1 SD over 3 seeds.
+
+---
+
+### 09 — Trustworthy Rewards: Pessimism against Reward Hacking
+`notebooks/09_pessimistic_reward.ipynb`
+
+A reinforcement-learning agent will exploit an imperfect reward model. It drifts into regions where the QSAR is confidently wrong. This notebook replaces the point-estimate activity term with a lower confidence bound, R = μ − λσ. Here μ and σ are the mean and standard deviation of a bootstrap ensemble of ten XGBoost predictors. The bound penalizes molecules the model rates highly but with high uncertainty.
+
+**Protocol:** A λ ablation (0, 2, 5, 10) was run over multiple replicates. Each run was evaluated on non-circular evidence, namely the ensemble σ, the Tanimoto similarity to the training domain, and QED, rather than on the reward itself.
+
+**Discussion:** This is the molecular analogue of the reward-model-ensemble pessimism used against over-optimization in RLHF [15]. It states the central thesis of the generative arc directly: every predicted term should carry its uncertainty. 
+
+![Lambda ablation study](figures/nb09_lambda_ablation.png)
+
+**Lambda ablation study** Ensemble uncertainty σ (top-100), applicability-domain score, predicted activity μ, and QED of the generated molecules as a function of the pessimism strength λ. Mean ± 1 SD over seeds.
+
+---
+
+### 10 — Physical Viability from Quantum Chemistry (Distributed xTB)
+`notebooks/10_xtb_viability.ipynb`
+
+Adds a physics-grounded term to the reward: electronic stability, proxied by the
+HOMO–LUMO gap. A dataset of GFN2-xTB [16] gaps was computed for ~50,000 drug-like
+ChEMBL molecules on the École Polytechnique SLURM cluster (job array of 100 tasks ×
+4 cores; single-point GFN2 on an MMFF-optimized 3D conformer per molecule), then used
+to train a fast surrogate so the expensive quantum calculation need not run inside the
+RL loop.
+
+**Dataset:** 49,505 gaps from 49,999 submitted molecules (99% success).
+
+![xTB dataset](figures/nb10_xTB_dataset.png)
+
+**xTB dataset visualisation** 
+
+**Surrogate performance (scaffold split):**
+| Task | Model | Metric |
+|---|---|---|
+| Stability classification (gap < 1.5 eV) | XGBoost + ECFP | ROC-AUC **0.957** |
+| Gap regression | XGBoost + ECFP | R² 0.640 / RMSE 0.550 eV |
+| Gap regression | GNN (GraphConv) | R² 0.484 (0.542 normalized) |
+
+![XGBoost classification](figures/nb10_XGBclass.png)
+
+**Discussion:** Classifying molecules as electronically stable or unstable is near-ceiling easy (AUC 0.957). Predicting the exact gap is only modest, and a non-tuned GNN does not beat XGBoost here. The ECFP classifier is therefore adopted as the viability surrogate. The term proves near-non-binding in generation: drug-like molecules are almost always electronically stable, so the guardrail rarely fires (see the ablation). The contribution of this notebook is the end-to-end distributed HPC pipeline and an honest characterization of a cheap but weak safety term.
+
+---
+
+### 11 — Combining Pessimism and Physical Viability in the RL Reward
+`notebooks/11_RL_xtb.ipynb`
+
+The first run to combine both new reward terms in a single agent. A REINVENT policy optimizes a reward that multiplies the pessimistic multifitness (the notebook-07 fitness with the raw activity replaced by the lower confidence bound μ − λσ, λ = 2) with the xTB viability guardrail (notebook 10), each implemented as a custom scoring plugin and combined by a geometric mean.
+
+**Protocol**: The REINVENT setup of notebook 08 (190 steps, batch 64). The run is compared to the optimistic multifitness baseline on reward-independent quantities: the ensemble uncertainty σ and the predicted activity μ of the final population (last 25% of steps).
+
+**Discussion**: The agent learns, as the total score and the activity term both rise across steps. Two terms, however, turn out not to bind. The xTB viability term stays near 0.97 from the first step, because molecules drawn from the prior are already electronically stable. Pessimism does not lower uncertainty either: the median σ is 0.231 for the pessimistic run against 0.221 for the optimistic baseline, and the median μ is 5.63 against 5.53, so the two populations are indistinguishable. The cause is structural. At λ = 2 the additive penalty λσ is diluted inside a multiplicative reward of four desirabilities, and the σ landscape is nearly flat across drug-like space, so no low-uncertainty region exists to move toward. This null result motivated the systematic leave-one-out ablation below, which showed that the auxiliary terms are individually redundant but collectively load-bearing.
+
+![uncertainty](figures/nb11_uncertainty.png)
+
+**Distributions of ensemble uncertainty σ (left) and predicted activity μ (right) over the final generated molecules**
+
+---
+
+### 12 - Reward-Component Ablation
+`scoring/scorer.py`, `scripts/generate_runs.py`, `notebooks/12_rl_ablation.ipynb`
+
+The full reward was factored out of the notebooks into a single versioned, importable
+module, so that every optimizer (REINVENT here, a MoLeR latent-space optimizer planned
+next) calls the *identical* objective under a shared oracle-call budget. Six selectable
+terms — pessimistic activity (μ−λσ), QED, applicability domain, synthetic accessibility,
+xTB viability, and a logD window (from the notebook-03 Lipophilicity model) — are
+combined by a renormalized geometric mean; the module is batch-vectorized and tracks a
+cached oracle-call counter for fair budget accounting.
+
+**Ablation study (leave-one-out):** the full 6-term reward plus each single term removed
+(7 conditions), each run over 5 independent REINVENT replicates at equal oracle budget
+(35 runs), evaluated on **reward-independent, per-term metrics** measured on the
+generated molecules (last 25% of steps). Two baselines — prior-only sampling and an
+activity-only reward — separate the contribution of the pretrained prior from that of the
+reward.
+
+**Effect of removing each term (full vs drop, mean over 5 replicates):**
+| Term removed | Target metric | full | drop |
+|---|---|---|---|
+| activity | predicted μ (pIC50) | 5.65 | 5.45 |
+| qed | QED | 0.79 | 0.76 |
+| sa | SA desirability | 0.82 | 0.81 |
+| xtb | viability | 0.97 | 0.97 |
+| logd | fraction in logD window | 0.66 | 0.60 |
+| ad | novelty | 0.72 | 0.72 |
+
+**Discussion:** Read one term at a time, most guardrails barely bind. Only activity, and to a lesser extent QED and logD, move their own metric beyond the replicate noise; synthetic accessibility, xTB viability and novelty do not. Read as a group, the guardrails matter. The activity-only reward, which drops all of them, reaches higher activity but pays for it with sharp losses in QED, xTB viability, synthetic accessibility and the logD window. The resolution is redundancy: each guardrail overlaps with the prior, the structural guards and the other terms, so removing any single one is absorbed by the rest, while removing all of them lets the agent trade drug-likeness for raw activity. The honest conclusion is that the auxiliary terms are individually redundant but collectively load-bearing. Activity is also the diversity driver: removing it collapses scaffold diversity, and optimizing it alone gives the most diverse population. Two caveats bound these results. The renormalized geometric mean means a leave-one-out effect mixes term removal with the reweighting of the rest, and five replicates give low power, so only effects beyond the replicate noise are read.
+
+![heatmap](figures/nb12-heatmap.png)
+
+**Ablation effects relative to the full reward**
 
 ---
 
@@ -428,4 +545,4 @@ as part of my Chemistry curriculum at ENS Paris-Saclay.
 A self-taught cheminformatics portfolio (developed with AI assistance) exploring
 machine learning for drug discovery.
 
-Contact: [nicolas.couret@ens-paris-saclay.fr](mailto:nicolas.couret@ens-paris-saclay.fr) · [LinkedIn](https://www.linkedin.com/in/nicolas-couret-97b78x/)
+Contact: [nicolas.couret@ens-paris-saclay.fr](mailto:nicolas.couret@ens-paris-saclay.fr) | [LinkedIn](https://www.linkedin.com/in/nicolas-couret-97b78x/)
