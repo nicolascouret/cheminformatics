@@ -409,25 +409,14 @@ The first run to combine both new reward terms in a single agent. A REINVENT pol
 
 ---
 
-### 12 - Reward-Component Ablation
+### 12 — Reward-Component Ablation
 `scoring/scorer.py`, `scripts/generate_runs.py`, `notebooks/12_rl_ablation.ipynb`
 
-The full reward was factored out of the notebooks into a single versioned, importable
-module, so that every optimizer (REINVENT here, a MoLeR latent-space optimizer planned
-next) calls the *identical* objective under a shared oracle-call budget. Six selectable
-terms — pessimistic activity (μ−λσ), QED, applicability domain, synthetic accessibility,
-xTB viability, and a logD window (from the notebook-03 Lipophilicity model) — are
-combined by a renormalized geometric mean; the module is batch-vectorized and tracks a
-cached oracle-call counter for fair budget accounting.
+The full reward was factored out of the notebooks into a single versioned, importable module, so that every optimizer (REINVENT here, a MoLeR latent-space optimizer planned next) calls the identical objective under a shared oracle-call budget. The module exposes six selectable terms: pessimistic activity (μ − λσ), QED, applicability domain, synthetic accessibility, xTB viability, and a logD window from the notebook-03 lipophilicity model. They are combined by a renormalized geometric mean. The code is batch-vectorized and tracks a cached oracle-call counter for fair budget accounting.
 
-**Ablation study (leave-one-out):** the full 6-term reward plus each single term removed
-(7 conditions), each run over 5 independent REINVENT replicates at equal oracle budget
-(35 runs), evaluated on **reward-independent, per-term metrics** measured on the
-generated molecules (last 25% of steps). Two baselines — prior-only sampling and an
-activity-only reward — separate the contribution of the pretrained prior from that of the
-reward.
+**Protocol**: Seven reward conditions were compared, the full six-term reward and each of its six leave-one-out variants, each run over five independent REINVENT replicates at equal oracle budget (35 runs). Every run was scored on reward-independent, per-term metrics measured on the generated molecules (last 25% of steps). Two baselines, prior-only sampling and an activity-only reward, separate the contribution of the pretrained prior from that of the reward.
 
-**Effect of removing each term (full vs drop, mean over 5 replicates):**
+**Effect of removing each term (mean over 5 replicates):**
 | Term removed | Target metric | full | drop |
 |---|---|---|---|
 | activity | predicted μ (pIC50) | 5.65 | 5.45 |
@@ -437,13 +426,30 @@ reward.
 | logd | fraction in logD window | 0.66 | 0.60 |
 | ad | novelty | 0.72 | 0.72 |
 
-**Discussion:** Read one term at a time, most guardrails barely bind. Only activity, and to a lesser extent QED and logD, move their own metric beyond the replicate noise; synthetic accessibility, xTB viability and novelty do not. Read as a group, the guardrails matter. The activity-only reward, which drops all of them, reaches higher activity but pays for it with sharp losses in QED, xTB viability, synthetic accessibility and the logD window. The resolution is redundancy: each guardrail overlaps with the prior, the structural guards and the other terms, so removing any single one is absorbed by the rest, while removing all of them lets the agent trade drug-likeness for raw activity. The honest conclusion is that the auxiliary terms are individually redundant but collectively load-bearing. Activity is also the diversity driver: removing it collapses scaffold diversity, and optimizing it alone gives the most diverse population. Two caveats bound these results. The renormalized geometric mean means a leave-one-out effect mixes term removal with the reweighting of the rest, and five replicates give low power, so only effects beyond the replicate noise are read.
+**Discussion**: Read one term at a time, most guardrails barely bind. Only activity, and to a lesser extent QED and the logD window, move their own metric beyond replicate noise. Synthetic accessibility, xTB viability and novelty do not. Read as a group, the guardrails matter. The activity-only reward drops all of them: it reaches higher activity but pays with sharp losses in QED, xTB viability, synthetic accessibility and the logD window. The explanation is redundancy. Each guardrail overlaps with the prior, the structural guards and the other terms, so removing any single one is absorbed by the rest, while removing all of them lets the agent trade drug-likeness for raw activity. The auxiliary terms are therefore individually redundant but collectively load-bearing. Activity is also the diversity driver: removing it collapses scaffold diversity, and optimizing it alone yields the most diverse population. Two caveats bound these results. The renormalized geometric mean means a leave-one-out effect mixes term removal with the reweighting of the remaining terms. Five replicates give low power, so only effects beyond replicate noise are read.
 
 ![heatmap](figures/nb12-heatmap.png)
 
-**Ablation effects relative to the full reward**
+**Ablation effects relative to the full reward, in replicate-noise units.**
 
 ---
+
+### 13 — Docking-in-the-loop Generation with an Uncertainty-Guarded Reward
+`notebooks/13_docking_gp.ipynb`
+
+A docking score is a fast but biased estimate of binding, and using it directly as a generative reward invites reward-hacking. This notebook turns docking into a reward while guarding against that failure with model uncertainty. A Gaussian-process surrogate is trained on 9,611 EGFR docking scores (smina, PDB 1M17). Its mean comes from a combined kernel (FCFP Tanimoto, physicochemical RBF, 3D-shape RBF, R² = 0.87 on a random split); its uncertainty comes from a separate Tanimoto-kernel GP. The two are decoupled on purpose: marginal likelihood optimizes predictive fit, not calibration, so each quantity is drawn from the model that estimates it best. A REINVENT agent then optimizes the lower confidence bound μ − λσ as a pessimistic docking reward.
+
+**Protocol**: The surrogate is validated under three train/test splits of increasing difficulty (random, scaffold, similarity). A REINVENT 4 agent (RNN prior on PubChem, DAP, σ = 128) is run for 190 steps at batch 64, five replicates per condition. The reward is a geometric mean that always includes two fixed quality terms, drug-likeness (QED) and synthetic accessibility, so that docking is the only potency term and the only variable is how it enters: no docking, the naive mean μ, the pessimistic bound μ − λσ, and the pessimistic bound with active learning (three rounds of real docking on UCB-selected candidates, then refit). Each run is evaluated by docking its final population for real.
+
+**Discussion**: The surrogate mean generalizes well everywhere (R² = 0.87, 0.86, 0.85), and the uncertainty is a faithful novelty detector: σ rises sharply with distance to the training set (Spearman(similarity, σ) = −0.75). On this dataset distance barely predicts error (Spearman(similarity, error) = −0.06), because the surrogate rarely fails badly inside drug-like space. In generation, every docking reward reaches far better real binding than the baseline (−8.6 vs −7.3 kcal/mol), and the pessimistic reward stays conservative (a surrogate-minus-real gap of −0.045 against +0.05 for the baseline), though the differences sit within replicate noise. The clearest result is a negative one: in every docking condition the best candidates drift to higher logP (≈5 vs 3.8), higher molecular weight (≈375 vs 320) and lower QED (≈0.6 vs 0.75), and pessimism does not stop it. This is oracle bias, not surrogate error: docking genuinely rewards hydrophobic bulk, those molecules lie inside the training domain where σ is low, so μ − λσ has no reason to penalize them. Pessimism guards against the surrogate disagreeing with the oracle; it cannot guard against the oracle disagreeing with reality. Correcting that drift needs guards of a different kind (property constraints, a synthesizability filter) and, ultimately, a less biased oracle.
+
+<img src="figures/surrogate_9600_eval.png" width="820">
+
+**Surrogate validation on the similarity split (hardest).** Parity of predicted vs observed docking (left), error retention when ranking by σ (centre), and σ as a novelty detector against distance to the training set (right).
+
+<img src="figures/nb13_summary.png" width="640">
+
+**Uncertainty-guarded docking generation.** (a–c) Potency–developability trade-off for the top-15 real binders per run (faint points), with per-condition means and 95% confidence intervals across five replicates (large markers). Gaining binding affinity costs drug-likeness, lipophilicity and molecular weight in every docking condition, and pessimism does not escape this oracle bias. (d) Reward-hacking gap (surrogate minus real docking); the pessimistic reward stays conservative. SA, predicted pIC50 and xTB stability did not differ across conditions.
 
 ### Streamlit App — Solubility & Target Activity Predictor
 `app.py`
