@@ -123,6 +123,15 @@ def dock_naive_desirability(mol):
     mu, _ = _get_surrogate()([Chem.MolToSmiles(mol)])
     return float(np.nan_to_num(_dock_desir(mu[0]), nan=0.0))
 
+LE_S0, LE_W = 0.35, 0.049          # sigmoid center/width on (score / heavy-atom count)
+def _le_desir(s, hac):
+    le = s / np.maximum(hac, 1)
+    return 1.0 / (1.0 + np.exp(-(le - LE_S0) / LE_W))
+
+def dock_le_desirability(mol):
+    mu, sg = _get_surrogate()([Chem.MolToSmiles(mol)])
+    return float(np.nan_to_num(_le_desir(mu[0] - LAM_DOCK*sg[0], mol.GetNumHeavyAtoms()), nan=0.0))
+
 ## Choosable reward
 TERMS = {
     "activity":   activity_desirability,
@@ -133,6 +142,7 @@ TERMS = {
     "logd":       logd_desirability,
     "dock":       dock_desirability,
     "dock_naive": dock_naive_desirability,
+    "dock_le":    dock_le_desirability,
 }
 
 def reward(smi, terms=("activity", "qed", "ad", "sa"), combine="geometric"):
@@ -166,13 +176,16 @@ def _score_batch(smiles, terms, combine, invalid_value):
         return out
     K = [mols[i] for i in keep]
     per_term = {}
-    if "dock" in terms or "dock_naive" in terms:  # ONE surrogate call for the batch
+    if "dock" in terms or "dock_naive" or "dock_le" in terms:  # ONE surrogate call for the batch
         mu, sg = _get_surrogate()([Chem.MolToSmiles(m) for m in K])
         mu = np.nan_to_num(mu, nan=0.0); sg = np.nan_to_num(sg, nan=1.0)
         if "dock" in terms:
             per_term["dock"] = np.nan_to_num(_dock_desir(mu - LAM_DOCK * sg), nan=0.0)
         if "dock_naive" in terms:
             per_term["dock_naive"] = np.nan_to_num(_dock_desir(mu), nan=0.0)
+        if "dock_le" in terms:
+            hac = np.array([m.GetNumHeavyAtoms() for m in K], float)
+            per_term["dock_le"] = np.nan_to_num(_le_desir(mu - LAM_DOCK * sg, hac), nan=0.0)
     for t in terms:                               # light terms stay per-molecule
         if t not in per_term:
             per_term[t] = np.array([TERMS[t](m) for m in K], dtype=float)

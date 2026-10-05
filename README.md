@@ -451,6 +451,27 @@ A docking score is a fast but biased estimate of binding, and using it directly 
 
 **Uncertainty-guarded docking generation.** (a–c) Potency–developability trade-off for the top-15 real binders per run (faint points), with per-condition means and 95% confidence intervals across five replicates (large markers). Gaining binding affinity costs drug-likeness, lipophilicity and molecular weight in every docking condition, and pessimism does not escape this oracle bias. (d) Reward-hacking gap (surrogate minus real docking); the pessimistic reward stays conservative. SA, predicted pIC50 and xTB stability did not differ across conditions.
 
+---
+
+### 14 — Ligand-based vs Structure-based Reward
+`notebooks/14_comparison_docking_qsar.ipynb`, `scoring/scorer.py`
+
+Notebook 13 showed that a docking reward drifts toward large, lipophilic molecules. This notebook asks what the choice of potency signal actually buys, and whether that drift can be corrected. Four rewards are compared under identical conditions. All share two fixed quality terms (QED and synthetic accessibility) and the same pessimistic lower-confidence-bound form μ − λσ, and differ only in how potency is scored: the notebook-06 QSAR pIC50, the docking surrogate, docking with an added logD window, and docking normalized per heavy atom (ligand efficiency, LE = (μ − λσ) / heavy-atom count). The docking-reward arm reuses the pessimistic runs of notebook 13.
+
+**Protocol**: Each objective is run over five independent REINVENT replicates (RNN prior on PubChem, DAP, σ = 128, 190 steps, batch 64). The final population of every run is docked for real, and each molecule is profiled on predicted pIC50, QED, logP, molecular weight, synthetic accessibility, xTB stability, novelty, and per-run scaffold diversity. The ligand-efficiency sigmoid is calibrated to the median and interquartile range of LE over the docking set.
+
+**Discussion**: The two oracles optimize partly different things. The pIC50 and docking rewards reach the same predicted pIC50 (around 5.6), but the docking reward reaches a better real docking score (−8.6 vs −7.3 kcal/mol) at a developability cost: lower QED, higher logP, higher molecular weight. The QSAR reward stays drug-like, anchored to real ChEMBL actives, without winning on pIC50. Adding a logD window to the docking reward barely helps, diluted inside the geometric mean against the strong gradient of docking toward hydrophobic bulk. Ligand efficiency corrects the drift at its source: normalizing per heavy atom collapses molecular weight (median near 235 vs 330 g/mol), lowers logP, raises QED, and gives the lowest SA score, since the molecules are small and simple. The cost appears on two axes. Absolute binding and predicted pIC50 both drop, because small molecules make fewer contacts, and scaffold diversity collapses (0.79 vs 0.97 to 0.99 for the other arms), because small molecules leave little room for distinct Bemis-Murcko frameworks. The failure mode flips rather than disappears: no single scalar objective yields a lead-like population. Raw potency and per-atom efficiency are endpoints of a spectrum, and good medicinal chemistry lives between them, which needs a balanced multi-objective (for instance ligand efficiency with a minimum-size floor, or absolute docking with a soft molecular-weight window) rather than any one term pushed to its limit.
+
+<img src="figures/nb14_pic50_vs_docking.png" width="680">
+
+**Potency and developability across the four reward objectives.** (a) Real docking vs predicted pIC50 for the final populations (faint points), with per-objective means and 95% confidence intervals across five replicates (large markers). (b–d) Drug-likeness, lipophilicity and molecular weight per objective.
+
+<img src="figures/nb14_secondary_criteria.png" width="680">
+
+**Secondary criteria.** (a) Synthetic accessibility (lower is easier), (b) xTB stability and (c) novelty, per molecule; (d) scaffold diversity per run. xTB stability and novelty are flat across objectives; ligand efficiency gives the easiest-to-make molecules but collapses scaffold diversity.
+
+--- 
+
 ### Streamlit App — Solubility & Target Activity Predictor
 `app.py`
 
