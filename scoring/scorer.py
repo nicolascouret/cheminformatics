@@ -27,14 +27,36 @@ sys.path.append(REPO)                       # to import scale_surrogate
 LAM_DOCK = 1.0                              # pessimism strength (mu - LAM_DOCK*sigma)
 DOCK_S0, DOCK_W = 8.0, 1.0                  # sigmoid desirability center/width on -affinity scale
 _SURR = None
+
 def _get_surrogate():
     global _SURR
     if _SURR is None:
-        from scale_surrogate import load_surrogate
-        _SURR = load_surrogate()            # rebuilds sigma-GP Cholesky once (~2-3 min)
+        if os.environ.get("DOCK_2D") == "1":
+            from refit_surrogate_2d import load_surrogate_2d
+            _SURR = load_surrogate_2d()
+        else:
+            from scale_surrogate import load_surrogate
+            _SURR = load_surrogate()        # rebuilds sigma-GP Cholesky once (~2-3 min)
     return _SURR
+
 def _dock_desir(s):
     return 1.0 / (1.0 + np.exp(-(s - DOCK_S0) / DOCK_W))
+
+_HER2 = None
+HER2_BUNDLE = f"{REPO}/models/surrogate_her2_2d.joblib"
+LAM_HER2 = 1.0
+
+def _get_her2_surrogate():
+    global _HER2
+    if _HER2 is None:
+        from refit_surrogate_2d import load_surrogate_2d
+        _HER2 = load_surrogate_2d(HER2_BUNDLE)
+    return _HER2
+
+def _select_desir(mu_e, sg_e, mu_h, sg_h):
+    egfr = _dock_desir(mu_e - LAM_DOCK * sg_e)
+    her2 = _dock_desir(mu_h - LAM_HER2 * sg_h)
+    return np.nan_to_num(egfr*(1 - her2), nan = 0.0)
  
 ## Morgan fingerprints and physical descriptors
 def compute_fp(mol, radius=2, nbits=2048):
@@ -132,6 +154,13 @@ def dock_le_desirability(mol):
     mu, sg = _get_surrogate()([Chem.MolToSmiles(mol)])
     return float(np.nan_to_num(_le_desir(mu[0] - LAM_DOCK*sg[0], mol.GetNumHeavyAtoms()), nan=0.0))
 
+# Selectivity for EGFR against HER2
+
+def select_desirability(mol):
+    s = Chem.MolToSmiles(mol)
+    me, se = _get_surrogate()([s]); mh, sh = _get_her2_surrogate()([s])
+    return float(_select_desir(me[0], se[0], mh[0], sh[0]))
+
 ## Choosable reward
 TERMS = {
     "activity":   activity_desirability,
@@ -143,6 +172,7 @@ TERMS = {
     "dock":       dock_desirability,
     "dock_naive": dock_naive_desirability,
     "dock_le":    dock_le_desirability,
+    "select": select_desirability,
 }
 
 def reward(smi, terms=("activity", "qed", "ad", "sa"), combine="geometric"):
@@ -176,7 +206,7 @@ def _score_batch(smiles, terms, combine, invalid_value):
         return out
     K = [mols[i] for i in keep]
     per_term = {}
-    if "dock" in terms or "dock_naive" or "dock_le" in terms:  # ONE surrogate call for the batch
+    if "dock" in terms or "dock_naive" or "dock_le" or "select" in terms:  # ONE surrogate call for the batch
         mu, sg = _get_surrogate()([Chem.MolToSmiles(m) for m in K])
         mu = np.nan_to_num(mu, nan=0.0); sg = np.nan_to_num(sg, nan=1.0)
         if "dock" in terms:
@@ -186,6 +216,12 @@ def _score_batch(smiles, terms, combine, invalid_value):
         if "dock_le" in terms:
             hac = np.array([m.GetNumHeavyAtoms() for m in K], float)
             per_term["dock_le"] = np.nan_to_num(_le_desir(mu - LAM_DOCK * sg, hac), nan=0.0)
+        if "select" in terms:
+            S = [Chem.MolToSmiles(m) for m in K]
+            me, se = _get_surrogate()(S);  mh, sh = _get_her2_surrogate()(S)
+            me = np.nan_to_num(me, nan=0.0); se = np.nan_to_num(se, nan=1.0)
+            mh = np.nan_to_num(mh, nan=0.0); sh = np.nan_to_num(sh, nan=1.0)
+            per_term["select"] = _select_desir(me, se, mh, sh)
     for t in terms:                               # light terms stay per-molecule
         if t not in per_term:
             per_term[t] = np.array([TERMS[t](m) for m in K], dtype=float)

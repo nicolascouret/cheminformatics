@@ -1,0 +1,5 @@
+arm,smiles,egfr,her2,margin
+RGFN select,O=C1CCCN(C(=O)N2CCC(N(C(=O)N3CCCC(=O)C3)c3ccc(-c4nc(Br)cs4)cn3)CC2)C1,-9.4,-0.8,8.6
+RGFN dock,O=C(Nc1ccccc1)N1CCC[C@H](C(=O)N2Cc3ccccc3C[C@H]2C(=O)N2CCCC(CO)C2)C1,-10.6,-7.6,3.0
+REINVENT select,CN1CC(C2(c3ccccc3)c3ccccc3Oc3ccccc32)NC2CCCCC21,-8.0,10.9,18.9
+REINVENT dock,Cc1ccc(-c2ccccc2)cc1C(=O)N1CCN(c2ncccn2)CC1,-9.7,-7.1,2.6
