@@ -443,11 +443,11 @@ A docking score is a fast but biased estimate of binding, and using it directly 
 
 **Discussion**: The surrogate mean generalizes well everywhere (R² = 0.87, 0.86, 0.85), and the uncertainty is a faithful novelty detector: σ rises sharply with distance to the training set (Spearman(similarity, σ) = −0.75). On this dataset distance barely predicts error (Spearman(similarity, error) = −0.06), because the surrogate rarely fails badly inside drug-like space. In generation, every docking reward reaches far better real binding than the baseline (−8.6 vs −7.3 kcal/mol), and the pessimistic reward stays conservative (a surrogate-minus-real gap of −0.045 against +0.05 for the baseline), though the differences sit within replicate noise. The clearest result is a negative one: in every docking condition the best candidates drift to higher logP (≈5 vs 3.8), higher molecular weight (≈375 vs 320) and lower QED (≈0.6 vs 0.75), and pessimism does not stop it. This is oracle bias, not surrogate error: docking genuinely rewards hydrophobic bulk, those molecules lie inside the training domain where σ is low, so μ − λσ has no reason to penalize them. Pessimism guards against the surrogate disagreeing with the oracle; it cannot guard against the oracle disagreeing with reality. Correcting that drift needs guards of a different kind (property constraints, a synthesizability filter) and, ultimately, a less biased oracle.
 
-<img src="figures/surrogate_9600_eval.png" width="820">
+![Surrogate validation on the similarity split](figures/surrogate_9600_eval.png)
 
 **Surrogate validation on the similarity split (hardest).** Parity of predicted vs observed docking (left), error retention when ranking by σ (centre), and σ as a novelty detector against distance to the training set (right).
 
-<img src="figures/nb13_summary.png" width="640">
+![Uncertainty-guarded docking generation](figures/nb13_summary.png)
 
 **Uncertainty-guarded docking generation.** (a–c) Potency–developability trade-off for the top-15 real binders per run (faint points), with per-condition means and 95% confidence intervals across five replicates (large markers). Gaining binding affinity costs drug-likeness, lipophilicity and molecular weight in every docking condition, and pessimism does not escape this oracle bias. (d) Reward-hacking gap (surrogate minus real docking); the pessimistic reward stays conservative. SA, predicted pIC50 and xTB stability did not differ across conditions.
 
@@ -462,15 +462,61 @@ Notebook 13 showed that a docking reward drifts toward large, lipophilic molecul
 
 **Discussion**: The two oracles optimize partly different things. The pIC50 and docking rewards reach the same predicted pIC50 (around 5.6), but the docking reward reaches a better real docking score (−8.6 vs −7.3 kcal/mol) at a developability cost: lower QED, higher logP, higher molecular weight. The QSAR reward stays drug-like, anchored to real ChEMBL actives, without winning on pIC50. Adding a logD window to the docking reward barely helps, diluted inside the geometric mean against the strong gradient of docking toward hydrophobic bulk. Ligand efficiency corrects the drift at its source: normalizing per heavy atom collapses molecular weight (median near 235 vs 330 g/mol), lowers logP, raises QED, and gives the lowest SA score, since the molecules are small and simple. The cost appears on two axes. Absolute binding and predicted pIC50 both drop, because small molecules make fewer contacts, and scaffold diversity collapses (0.79 vs 0.97 to 0.99 for the other arms), because small molecules leave little room for distinct Bemis-Murcko frameworks. The failure mode flips rather than disappears: no single scalar objective yields a lead-like population. Raw potency and per-atom efficiency are endpoints of a spectrum, and good medicinal chemistry lives between them, which needs a balanced multi-objective (for instance ligand efficiency with a minimum-size floor, or absolute docking with a soft molecular-weight window) rather than any one term pushed to its limit.
 
-<img src="figures/nb14_pic50_vs_docking.png" width="680">
+![Potency and developability across the four reward objectives](figures/nb14_pic50_vs_docking.png)
 
 **Potency and developability across the four reward objectives.** (a) Real docking vs predicted pIC50 for the final populations (faint points), with per-objective means and 95% confidence intervals across five replicates (large markers). (b–d) Drug-likeness, lipophilicity and molecular weight per objective.
 
-<img src="figures/nb14_secondary_criteria.png" width="680">
+![Secondary criteria across the four reward objectives](figures/nb14_secondary_criteria.png)
 
 **Secondary criteria.** (a) Synthetic accessibility (lower is easier), (b) xTB stability and (c) novelty, per molecule; (d) scaffold diversity per run. xTB stability and novelty are flat across objectives; ligand efficiency gives the easiest-to-make molecules but collapses scaffold diversity.
 
 --- 
+
+### 15 — Synthesis-aware Generation and the Geometry of Reward Design (RGFN)
+`notebooks/15_GFlowNet_qsar_vs_docking.ipynb`, `scoring/scorer.py`
+
+The earlier generators wrote SMILES one character at a time, with no guarantee that the resulting molecule could be made. Notebook 15 switches to a reaction-based GFlowNet (RGFN [17]), which builds each molecule by applying reaction templates to compatible reactants, so every candidate arrives with an explicit synthetic route. A GFlowNet also learns to sample in proportion to the reward rather than to maximize it, which favors a diverse set of high-reward molecules over a single mode. The project scorer (notebook 12) provides the reward. Three reward designs are compared under identical settings: a ligand-based QSAR multi-objective, docking alone, and docking combined with the QED, SA, and logD guardrails. Each runs over five seeds, with REINVENT baselines at a matched objective, and every population is re-docked against EGFR.
+
+**Protocol:** Generation uses a library of 350 building blocks and 66 reaction templates, trained by trajectory balance for 3,000 iterations on CPU, with the notebook-12 scorer plugged in as the reward. Three reward designs are compared under identical settings: the ligand-based QSAR pIC50, docking alone, and docking combined with the QED, SA, and logD guardrails. Each is run over five independent seeds (mean ± std), with REINVENT runs at a matched objective as a generator baseline. Every final population is docked for real against EGFR (smina, PDB 1M17) and profiled on QED, cLogP, molecular weight, synthetic accessibility, scaffold diversity, and novelty.
+
+![Figure 1 — reward design](figures/nb15_fig1_reward_design.png)
+
+**Figure 1. Per-term profile of the generated populations under the three reward arms.**
+Single-objective docking drives molecular obesity; adding the QED / SA / logD guardrails
+recovers drug-likeness (median QED 0.26 → 0.37, cLogP 3.7 → 3.0) and raises scaffold
+diversity, stable across five seeds (inter-seed std ≈ 0.004–0.04).
+
+
+**Discussion:** Reward shape, not the choice of generator, governs whether the population is drug-like. Docking alone inflates molecular weight and lipophilicity under both RGFN and REINVENT, and the same QED, SA, and logD guardrails correct it in both, raising median QED from 0.26 to 0.37 and lowering cLogP from 3.7 to 3.0 while holding scaffold diversity near its maximum. Ligand efficiency reverses the raw-affinity ranking: the docking-only arm reaches the best raw affinity, a median of −9.75 kcal/mol, but the worst per-atom efficiency (0.257), whereas the ligand-based arm is weakest on raw affinity (−7.8) yet most efficient (0.355). The surrogate stays faithful in the bulk and saturates near μ ≈ 10 rather than being exploited pose by pose (Spearman 0.25 against 0.43), so the residual drift reflects a gap between the oracle and reality, not surrogate error. The generator fixes the prior over chemistry: at a matched objective RGFN explores a bulkier, lower-QED region (MW ≈ 510, QED ≈ 0.35) and REINVENT a compact, QED-rich one (MW ≈ 287, QED ≈ 0.82). Two limits bound these results. Five seeds give low statistical power, and the RGFN-versus-REINVENT docking comparison is not matched for information, since the REINVENT runs used active learning against the real oracle while RGFN saw only the surrogate.
+
+---
+
+### 16 — Designing for Selectivity: EGFR over HER2
+`notebooks/16_REINVENT_vs_RGFN.ipynb`, `scoring/scorer.py`
+
+Potency against a single kinase does not make a drug. Inhibitors of the ATP site routinely bind close relatives, and off-target kinase activity is a common source of toxicity. This notebook steers the generators toward selectivity: strong EGFR binding together with weak binding to the closely related HER2 (ERBB2) kinase, used here as an anti-target. It asks whether a two-sided reward can separate two targets that share an almost identical binding site.
+
+
+**Protocol:** A HER2 docking surrogate is built to mirror the EGFR one (fast 2D variant, R² ≈ 0.70, smina on PDB 3PP0). The reward is two-sided: EGFR potency enters as a pessimistic lower confidence bound μ − λσ, so only confident binders are credited, while HER2 enters as a pessimistic upper bound μ + λσ, so any molecule that might bind the anti-target is penalized. The reported endpoint is the selectivity margin, affinity(HER2) − affinity(EGFR), positive when a molecule prefers EGFR. Four populations are generated over several seeds, RGFN and REINVENT under both the selectivity reward and a plain docking reward, and each final population is re-docked for real against both targets.
+
+![Figure 1 — selectivity](figures/nb16_fig1_selectivity.png)
+
+**Figure 1. Real re-docked affinity against EGFR, against HER2, and the selectivity margin,
+by population.** Median re-docked values: RGFN-select EGFR −9.20 / HER2 −7.90 / margin
+**+0.75**; RGFN-dock −8.70 / −10.05 / −1.15; REINVENT-select −8.80 / −8.55 / −0.10;
+REINVENT-dock −9.00 / −10.80 / −1.40. The anti-target term weakens true HER2 binding by
+≈ 2–2.5 kcal/mol while holding EGFR affinity.
+
+
+![Figure 5 — interaction figures](protein_figures/nb16_fig5_interactions.png)
+
+**Figure 5. Best ligand of each model, docked in the EGFR ATP pocket (PyMOL).** Ligand
+sticks, pocket side chains and ligand–protein hydrogen bonds are shown for the top candidate
+of each arm.
+
+**Discussion:** The two-sided reward does what it was designed to do: it weakens true HER2 binding by roughly 2 to 2.5 kcal/mol while holding EGFR affinity. The two generators reach different endpoints. Under the selectivity reward RGFN attains a positive median margin, near +0.75 kcal/mol in favor of EGFR, with re-docked medians of −9.20 kcal/mol on EGFR and −7.90 on HER2, whereas REINVENT reaches only a neutral margin near −0.10. Both plain docking rewards prefer HER2, because the shared ATP site is optimized by raw affinity alone. The generator inductive bias of notebook 15 persists here: RGFN produces larger, lower-QED, less accessible molecules, and REINVENT compact, high-QED, readily synthesizable ones. Three limits apply: the HER2 surrogate is weaker than the EGFR one (R² ≈ 0.70), five seeds give low power, and all validation is computational re-docking against a size-biased oracle, with no experimental or free-energy confirmation.
+
+---
 
 ### Streamlit App — Solubility & Target Activity Predictor
 `app.py`
@@ -555,6 +601,27 @@ arrhythmia. *Nature* **440**, 463–469 (2006). https://doi.org/10.1038/nature04
 [12] Zdrazil, B. et al. The ChEMBL Database in 2023: a drug discovery platform
 spanning multiple bioactivity data types and time periods. *Nucleic Acids Res.*
 **52**, D1180–D1192 (2024). https://doi.org/10.1093/nar/gkad1004
+
+[13] Krenn, M., Häse, F., Nigam, A., Friederich, P. & Aspuru-Guzik, A.
+Self-referencing embedded strings (SELFIES): a 100% robust molecular string
+representation. *Mach. Learn.: Sci. Technol.* **1**, 045024 (2020).
+https://doi.org/10.1088/2632-2153/aba947
+
+[14] Loeffler, H.H. et al. Reinvent 4: modern AI-driven generative molecule design.
+*J. Cheminform.* **16**, 20 (2024). https://doi.org/10.1186/s13321-024-00812-5
+
+[15] Coste, T., Anwar, U., Kirk, R. & Krueger, D. Reward model ensembles help
+mitigate overoptimization. *International Conference on Learning Representations
+(ICLR)* (2024). https://arxiv.org/abs/2310.02743
+
+[16] Bannwarth, C., Ehlert, S. & Grimme, S. GFN2-xTB — an accurate and broadly
+parametrized self-consistent tight-binding quantum chemical method with multipole
+electrostatics and density-dependent dispersion contributions. *J. Chem. Theory
+Comput.* **15**, 1652–1671 (2019). https://doi.org/10.1021/acs.jctc.8b01176
+
+[17] Koziarski, M. et al. RGFN: synthesizable molecular generation using GFlowNets.
+*Advances in Neural Information Processing Systems (NeurIPS)* (2024).
+https://arxiv.org/abs/2406.08506
 
 ## Reproduce the environment
 
